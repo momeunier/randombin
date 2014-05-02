@@ -1,7 +1,7 @@
 #!/bin/bash
  
 # Marc-Olivier Meunier momeunier@gmail.com
-# Script to create a list random bin files
+# Script to create a list of random bin files
 # This script is released under GPL licence. Please share it if you use it or modify it and mail it back to me.
  
  
