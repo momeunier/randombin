@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash 
  
 # Marc-Olivier Meunier momeunier@gmail.com
 # Script to create a list of random bin files
@@ -12,7 +12,7 @@
 # version 0.1
 # Changelog: first version
  
-number_of_files=200000                          # Number of files to be created
+number_of_files=200000			# Number of files to be created
 size=5000000                            # Size of each file in bytes
 offset=1001                             # Number of bytes that will be regenerated at the beginning of the file (you only need to change a few bytes to get a different file)
 directory=/tmp/files		        # Where to store the files
@@ -24,11 +24,12 @@ naming_offset=1000000                   # Offset used in the filename
 suffix="jpg"                            # Suffix of the files create
 randomness=false                    	# Create one random file and duplicate it if false or create individual random files if true
 dry_run=false                           # Show the configuration but don't execute
-oneloop=false                            # Execute only one loop
+oneloop=false                           # Execute only one loop
 background=false			# Run in the background, randomly update files
 checklsof=false				# Check if there is a file descriptor open on a file before replacing it
-verbose=true				# Print out which files are being replaced
-summarypct=false				# Print out a summary every 10% of the file creation is achieved
+verbose=false				# Print out which files are being replaced
+summarypct=false			# Print out a summary every 10% of the file creation is achieved
+logfile=/tmp/randombin.$(date +"%Y-%m-%d").log		# Log file
  
 while test $# -gt 0; do
         case "$1" in
@@ -137,12 +138,16 @@ while test $# -gt 0; do
                         shift
                         ;;
                 -b|--background)
-                        shift
-                        if test $# -gt 0; then
-                                export background=$1
-                        fi
+                        export background=true
                         shift
                         ;;
+
+                        #shift
+                        #if test $# -gt 0; then
+                        #        export background=$1
+                        #fi
+                        #shift
+                        #;;
                 -f|--check-fd)
                         shift
                         if test $# -gt 0; then
@@ -212,90 +217,139 @@ fi
         echo "print out a summary: $summarypct"
  
 #PID checking
-#pid=`ps -edf| grep randombin.sh| grep -v grep| wc -l|sed 's/[^0-9]*//g'`
+#pid=$(pidof randombin.sh)
 #if (( "$pid" > "1" ));
 #then
 #       echo "One instance of randombin.sh is already running. Please stop it before running a new one"
 #       exit 1
 #fi
- 
- 
-if $dry_run :
+
+function log() {
+if $verbose :
 then
-        exit 0
+	echo $1 | tee $logfile
+else
+	echo $1 >> $logfile
 fi
+}
  
-if [ ! -d "$directory" ]; then
-        mkdir -p $directory
-        chown -R $chown_user $directory
-fi
  
-if $remove_first :
-then
-        find $directory"/" -name "*."$suffix -type f -delete
-fi
 
 function do_the_job { 
 while true;
 do
-        if $recreate ;
+        if $recreate :
         then
-                #rm -f $directory"/file"*$suffix
-		find $directory"/" -name "*."$suffix -type f -delete
-        fi
+		nbr=$(find $directory"/" -name "file$naming_offset*.$suffix" -type f| wc -l) 
+		#echo $nbr
+		#exit 1
+		log "Removing $nbr files file${naming_offset}*.${suffix} in the directory $directory" 
+        	find $directory"/" -name "*.$suffix" -type f -delete
+		if [ $? = 0 ]; then
+			log "Success. $nbr files removed" 
+		else
+			log "Failure, something went wrong. Could be a permission problem. Stopping." 
+			exit 1
+		fi
+	fi
  
         if [ -f $directory"/file"$naming_offset"."$suffix ];
         then
-                echo "Creating "$number_of_files" files of "$size" bits"
+                log "Creating "$number_of_files" files of "$size" bits" 
                 for (( j=$naming_offset; j<=$naming_offset+$number_of_files-1; j++ ))
                 do
                         filename=$directory"/file"$j"."$suffix
                         # check if the offset is smaller than the filesize, if it is => recreate the whole file.
                         if [ $size -gt $offset ];
                         then
-                                echo "file"$j"."$suffix" created with offset of "$offset" from previous file"
+                                log "file"$j"."$suffix" created with offset of "$offset" from previous file" 
 				
                                 dd if=/dev/urandom of=$filename bs=$offset count=1 conv=notrunc &>/dev/null
                         else
-                                echo "file"$j"."$suffix" created"
+                                log "file"$j"."$suffix" created" 
                                 dd bs=$size count=1 if=/dev/urandom of=$filename &>/dev/null
                         fi
                 done
         else
-                echo "Creating "$number_of_files" files of "$size" bits"
+                log "Creating "$number_of_files" files of "$size" bits" 
                 filename_dd=$directory"/file"$naming_offset"."$suffix
                 dd bs=$size count=1 if=/dev/urandom of=$filename_dd &>/dev/null
                 for (( i=$naming_offset+1; i<=$naming_offset+$number_of_files-1; i++ ))
                 do
-                        echo "file"$i"."$suffix" created"
+                        log "file"$i"."$suffix" created" 
                         filename=$directory"/file"$i"."$suffix
                         cp $filename_dd $filename
 			#update the existing files by replacing the first $offset bytes by something random
                         dd if=/dev/urandom of=$filename bs=$offset count=1 conv=notrunc &>/dev/null
-                        #dd bs=$size count=1 if=/dev/urandom of=$filename &>/dev/null
                 done
         fi
 	#changing owner. This only works if the user running randombin is root.
         if [ "$(id -u)" = "0" ]; then
 		chown -R $chown_user $directory
 	else
-		echo "Impossible to chown, must be root to do that"
+		log "Impossible to chown, must be root to do that" 
 	fi
         if $oneloop :
         then
                 exit 0
         fi
  
-        echo "Sleeping for "$sleep_time"s"
+        log "Sleeping for "$sleep_time"s" 
         sleep $sleep_time
  
 done
 }
 
+if $dry_run :
+then
+	log "Dry run, no files created" 
+        exit 0
+fi
+ 
+if [ ! -d "$directory" ]; then
+        mkdir -p $directory
+	if [ $? != 0 ]; then
+		log "Something went wrong. Stopping" 
+		exit 1
+	else
+		log "Directory $directory already existing or successfully created" 
+	fi
+        chown -R $chown_user $directory
+fi
+ 
+if $remove_first :
+then
+	nbr=$(find $directory"/" -name "file$naming_offset*.$suffix" -type f| wc -l) 
+	log "Removing $nbr files file${naming_offset}*.${suffix} in the directory $directory" 
+	echo -n "You are about to remove $nbr file ($directory/file$naming_offset*.$suffix)? [yes or no]: "
+	read yno
+	case $yno in
+	        [yY] | [yY][Ee][Ss] )
+	                echo "Ok, Let's proceed"
+		        find $directory"/" -name "*.$suffix" -type f -delete
+			if [ $? = 0 ]; then
+				log "Success. $nbr files removed" 
+			else
+				log "Failure, something went wrong. Could be a permission problem. Stopping." 
+				exit 1
+			fi
+	                ;;
+	        [nN] | [n|N][O|o] )
+	                echo "We keep the files";
+	                ;;
+	        *) echo "Invalid input, we continue without removing the files first."
+	            ;;
+	esac
+
+fi
+
+
 if $background : 
 then
+	log "Starting in Background mode" 
 	(do_the_job;) 0<&- &> /dev/null &
 	disown
 else
+	log "Starting" 
 	do_the_job
 fi
