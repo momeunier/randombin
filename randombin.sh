@@ -3,7 +3,7 @@
 # Marc-Olivier Meunier momeunier@gmail.com
 # Script to create a list of random bin files
 # This script is released under GPL licence. Please share it if you use it or modify it and mail it back to me.
- 
+# Fork me on github: https://github.com/momeunier/randombin.git 
  
 # version 0.3
 # Changelog: Big performance improvement in the recreation of file using dd option
@@ -14,17 +14,21 @@
  
 number_of_files=200000                          # Number of files to be created
 size=5000000                            # Size of each file in bytes
-offset=1001                             # Number of bytes that will be regenerated at the beginning of the file
-directory=/home/www/content/random/5Mjpg        # Where to store the files
+offset=1001                             # Number of bytes that will be regenerated at the beginning of the file (you only need to change a few bytes to get a different file)
+directory=/tmp/files		        # Where to store the files
 recreate=false                          # Should we recreate each files completely (should be false)
-remove_first=true                       # Remove every bin file in $directory before starting => true=slow start
+remove_first=false                      # Remove every bin file in $directory before starting => true=slow start
 sleep_time=3                            # How long between each iteration
-chown_user="momeunier:momeunier"                  # Owner of the files
+chown_user="$(id -un):$(id -gn)"        # Owner of the files
 naming_offset=1000000                   # Offset used in the filename
 suffix="jpg"                            # Suffix of the files create
-truerandomness=false                    # Do we create one random file and duplicate it or do we create each file different
+randomness=false                    	# Create one random file and duplicate it if false or create individual random files if true
 dry_run=false                           # Show the configuration but don't execute
-oneloop=true                            # Execute only one loop
+oneloop=false                            # Execute only one loop
+background=false			# Run in the background, randomly update files
+checklsof=false				# Check if there is a file descriptor open on a file before replacing it
+verbose=true				# Print out which files are being replaced
+summarypct=false				# Print out a summary every 10% of the file creation is achieved
  
 while test $# -gt 0; do
         case "$1" in
@@ -46,6 +50,10 @@ while test $# -gt 0; do
                         echo "-c [true|false]   NOT IMPLEMENTED YET: create one random file and duplicate it or do we create each file different. Default: $truerandomness"
                         echo "-y [true|false]   dry run, do not create any file. Default: $dry_run"
                         echo "-z [true|false]   One loop. The script is not running as a daemon. Default: $oneloop"
+			echo "-b [true|false]	Run in the background, randomly update files. Default: $background"
+			echo "-f [true|false] 	NOT IMPLEMENTED YET: Check if there is a file descriptor open on a file before replacing it. Default: $checklsof"
+			echo "-v [true|false]	NOT IMPLEMENTED YET: Verbose. Default: $verbose"
+			echo "-p [true|false]	NOT IMPLEMENTED YET: Print out a summary every 10% of the file creation is achieved. Default: $summarypct"
                         echo ""
                         echo "Example: ./randombin.sh -n 10 -s 100 -t 5 -x bla -a 1000 -y true -l /tmp/bin/ -z true"
                         exit 0
@@ -121,6 +129,41 @@ while test $# -gt 0; do
                         fi
                         shift
                         ;;
+                -c|--create-true-random)
+                        shift
+                        if test $# -gt 0; then
+                                export randomness=$1
+                        fi
+                        shift
+                        ;;
+                -b|--background)
+                        shift
+                        if test $# -gt 0; then
+                                export background=$1
+                        fi
+                        shift
+                        ;;
+                -f|--check-fd)
+                        shift
+                        if test $# -gt 0; then
+                                export checklsof=$1
+                        fi
+                        shift
+                        ;;
+                -v|--verbose)
+                        shift
+                        if test $# -gt 0; then
+                                export verbose=$1
+                        fi
+                        shift
+                        ;;
+                -p|--print-summary)
+                        shift
+                        if test $# -gt 0; then
+                                export summarypct=$1
+                        fi
+                        shift
+                        ;;
                 -y|--dry-run)
                         shift
                         if test $# -gt 0; then
@@ -163,6 +206,10 @@ fi
         echo "file names will have the suffix: $suffix"
         echo "dry run: $dry_run"
         echo "only one execution: $oneloop"
+        echo "run in background (daemonized): $background"
+        echo "skips files in use: $checklsof"
+        echo "verbose: $verbose"
+        echo "print out a summary: $summarypct"
  
 #PID checking
 #pid=`ps -edf| grep randombin.sh| grep -v grep| wc -l|sed 's/[^0-9]*//g'`
@@ -185,15 +232,16 @@ fi
  
 if $remove_first :
 then
-        find $directory"/" -type f -print0 | xargs -0 rm -f
+        find $directory"/" -name "*."$suffix -type f -delete
 fi
- 
+
+function do_the_job { 
 while true;
 do
         if $recreate ;
         then
-                rm -f $directory"/file"*$suffix
-                find $directory"/" -name "*."$suffix -type f -print0 | xargs -0 rm -f
+                #rm -f $directory"/file"*$suffix
+		find $directory"/" -name "*."$suffix -type f -delete
         fi
  
         if [ -f $directory"/file"$naming_offset"."$suffix ];
@@ -206,6 +254,7 @@ do
                         if [ $size -gt $offset ];
                         then
                                 echo "file"$j"."$suffix" created with offset of "$offset" from previous file"
+				
                                 dd if=/dev/urandom of=$filename bs=$offset count=1 conv=notrunc &>/dev/null
                         else
                                 echo "file"$j"."$suffix" created"
@@ -221,11 +270,17 @@ do
                         echo "file"$i"."$suffix" created"
                         filename=$directory"/file"$i"."$suffix
                         cp $filename_dd $filename
+			#update the existing files by replacing the first $offset bytes by something random
                         dd if=/dev/urandom of=$filename bs=$offset count=1 conv=notrunc &>/dev/null
                         #dd bs=$size count=1 if=/dev/urandom of=$filename &>/dev/null
                 done
         fi
-        chown -R $chown_user $directory
+	#changing owner. This only works if the user running randombin is root.
+        if [ "$(id -u)" = "0" ]; then
+		chown -R $chown_user $directory
+	else
+		echo "Impossible to chown, must be root to do that"
+	fi
         if $oneloop :
         then
                 exit 0
@@ -235,3 +290,12 @@ do
         sleep $sleep_time
  
 done
+}
+
+if $background : 
+then
+	(do_the_job;) 0<&- &> /dev/null &
+	disown
+else
+	do_the_job
+fi
